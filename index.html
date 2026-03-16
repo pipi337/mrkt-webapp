@@ -1116,8 +1116,11 @@
             viewHistory: []
         };
 
-        // API Base URL (will be set by bot)
+        // API Base URL — tgmrkt.io (прямые запросы)
         const API_URL = 'https://api.tgmrkt.io/api/v1';
+        const MRKT_TOKEN = '09b44cac-92d7-4954-8999-aabd3f172881';
+        // Бот API — локальный сервер с реальными данными
+        const BOT_API = '';  // пусто = тот же домен (GitHub Pages → ngrok)
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1297,75 +1300,67 @@
 
         async function refreshListings() {
             const container = document.getElementById('listingsContainer');
-            
-            // Show skeleton loaders
             container.innerHTML = `
-                <div class="skeleton-card">
-                    <div class="skeleton skeleton-image"></div>
-                    <div>
-                        <div class="skeleton skeleton-text"></div>
-                        <div class="skeleton skeleton-text short"></div>
-                    </div>
-                    <div class="skeleton skeleton-price"></div>
-                </div>
-                <div class="skeleton-card">
-                    <div class="skeleton skeleton-image"></div>
-                    <div>
-                        <div class="skeleton skeleton-text"></div>
-                        <div class="skeleton skeleton-text short"></div>
-                    </div>
-                    <div class="skeleton skeleton-price"></div>
-                </div>
-                <div class="skeleton-card">
-                    <div class="skeleton skeleton-image"></div>
-                    <div>
-                        <div class="skeleton skeleton-text"></div>
-                        <div class="skeleton skeleton-text short"></div>
-                    </div>
-                    <div class="skeleton skeleton-price"></div>
-                </div>
+                <div class="skeleton-card"><div class="skeleton skeleton-image"></div><div><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text short"></div></div><div class="skeleton skeleton-price"></div></div>
+                <div class="skeleton-card"><div class="skeleton skeleton-image"></div><div><div class="skeleton skeleton-text"></div><div class="skeleton skeleton-text short"></div></div><div class="skeleton skeleton-price"></div></div>
             `;
-
             try {
-                // Simulated data (replace with actual API call)
-                const response = await fetch(`${API_URL}/gifts/saling`, {
+                // Сначала пробуем бот API (реальные данные из кэша бота)
+                let listings = [];
+                const botResp = await fetch(BOT_API + '/api/listings').catch(() => null);
+                if (botResp && botResp.ok) {
+                    const botData = await botResp.json();
+                    if (botData && botData.length > 0) {
+                        listings = botData.map(item => ({
+                            id: item.platform + '_' + item.collection + '_' + item.number + '_' + (item.ts || ''),
+                            name: item.collection + ' #' + item.number,
+                            collection: item.collection,
+                            platform: item.platform.toLowerCase(),
+                            price: item.price,
+                            floor: item.floor || 0,
+                            model: item.model || '',
+                            backdrop: item.backdrop || '',
+                            symbol: item.symbol || '',
+                            ts: item.ts,
+                            image: 'https://placehold.co/60x60/242424/58a6ff?text=' + encodeURIComponent(item.collection.slice(0,2))
+                        }));
+                        state.listings = listings;
+                        renderListings(listings);
+                        return;
+                    }
+                }
+                // Fallback: прямой запрос к tgmrkt.io
+                const resp = await fetch(API_URL + '/gifts/saling', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': '${MRKT_TOKEN}'
-                    },
-                    body: JSON.stringify({ count: 20 })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': MRKT_TOKEN },
+                    body: JSON.stringify({ count: 20, cursor: '', collectionNames: [], modelNames: [], backdropNames: [], symbolNames: [], minPrice: null, maxPrice: null, number: null, isPremarket: null, isNew: null, luckyBuy: null, giftType: null, craftable: null, isCrafted: null, tgCanBeCraftedFrom: null, removeSelfSales: null, isTransferable: null, ordering: 'None', lowToHigh: false, query: null })
                 }).catch(() => null);
-                
-                // Demo data for now
-                const listings = generateDemoListings();
-                state.listings = listings;
-                renderListings(listings);
+                if (resp && resp.ok) {
+                    const data = await resp.json();
+                    const gifts = (data && data.gifts) || [];
+                    listings = gifts.map(g => ({
+                        id: g.id || g.giftIdString,
+                        name: (g.collectionTitle || g.collectionName || '?') + ' #' + (g.number || '?'),
+                        collection: g.collectionTitle || g.collectionName || '?',
+                        platform: 'mrkt',
+                        price: ((g.salePrice || g.salePriceWithoutFee || 0) / 1e9).toFixed(2),
+                        floor: 0,
+                        model: g.modelTitle || g.modelName || '',
+                        backdrop: g.backdropName || '',
+                        symbol: g.symbolName || '',
+                        image: 'https://placehold.co/60x60/242424/58a6ff?text=' + encodeURIComponent((g.collectionTitle || 'G').slice(0,2))
+                    }));
+                    state.listings = listings;
+                    renderListings(listings);
+                    return;
+                }
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">Нет данных</div><div class="empty-text">Запусти мониторинг в боте</div></div>';
             } catch (e) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-icon">⚠️</div>
-                        <div class="empty-title">Ошибка загрузки</div>
-                        <div class="empty-text">Попробуйте позже</div>
-                    </div>
-                `;
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Ошибка</div><div class="empty-text">' + e.message + '</div></div>';
             }
         }
 
-        function generateDemoListings() {
-            const collections = ['Christmas Tree', 'Space Monkey', 'Dragon', 'Panda', 'Wolf'];
-            const platforms = ['mrkt', 'portal', 'tonnel'];
-            
-            return Array.from({ length: 15 }, (_, i) => ({
-                id: `listing_${i}`,
-                name: `${collections[i % collections.length]} #${1000 + i}`,
-                collection: collections[i % collections.length],
-                platform: platforms[i % platforms.length],
-                price: (Math.random() * 10 + 1).toFixed(2),
-                floor: (Math.random() * 15 + 5).toFixed(2),
-                image: `https://placehold.co/60x60/242424/58a6ff?text=${i + 1}`
-            }));
-        }
+
 
         function renderListings(listings) {
             const container = document.getElementById('listingsContainer');
@@ -1471,73 +1466,41 @@
 
         async function refreshAuctions() {
             const container = document.getElementById('auctionsContainer');
-            
-            // Demo auctions
-            const auctions = [
-                {
-                    id: 'auction_1',
-                    name: 'Rare Dragon #42',
-                    endTime: Date.now() + 7200000, // 2 hours
-                    currentBid: 15.5,
-                    bids: 12
-                },
-                {
-                    id: 'auction_2',
-                    name: 'Space Monkey #108',
-                    endTime: Date.now() + 3600000, // 1 hour
-                    currentBid: 8.2,
-                    bids: 7
+            container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            try {
+                const resp = await fetch(BOT_API + '/api/calendar').catch(() => null);
+                if (!resp || !resp.ok) throw new Error('no response');
+                const auctions = await resp.json();
+                state.auctions = auctions;
+                document.getElementById('statAuctions').textContent = auctions.length;
+                if (!auctions.length) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">Нет активных аукционов</div><div class="empty-text">Запусти мониторинг в боте</div></div>';
+                    return;
                 }
-            ];
-            
-            state.auctions = auctions;
-            
-            if (auctions.length === 0) {
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-icon">📅</div>
-                        <div class="empty-title">Нет активных аукционов</div>
-                        <div class="empty-text">Проверьте позже</div>
-                    </div>
-                `;
-                return;
-            }
-            
-            container.innerHTML = auctions.map(auction => {
-                const timeLeft = auction.endTime - Date.now();
-                const hours = Math.floor(timeLeft / 3600000);
-                const minutes = Math.floor((timeLeft % 3600000) / 60000);
-                const seconds = Math.floor((timeLeft % 60000) / 1000);
-                
-                return `
-                    <div class="card">
+                container.innerHTML = auctions.map(a => {
+                    const endMs = new Date(a.end_time).getTime();
+                    const timeLeft = Math.max(0, endMs - Date.now());
+                    const h = Math.floor(timeLeft / 3600000);
+                    const m = Math.floor((timeLeft % 3600000) / 60000);
+                    const s = Math.floor((timeLeft % 60000) / 1000);
+                    return `<div class="card">
                         <div class="card-header">
                             <div>
-                                <div class="card-title">${auction.name}</div>
-                                <div class="card-subtitle">Ставок: ${auction.bids}</div>
+                                <div class="card-title">${a.collection} #${a.number}</div>
+                                <div class="card-subtitle">${a.model || ''} · Ставок: ${a.bids_count}</div>
                             </div>
-                            <div class="price">${auction.currentBid} TON</div>
+                            <div class="price">${a.current_bid} TON</div>
                         </div>
-                        <div class="countdown" data-end="${auction.endTime}">
-                            <div class="countdown-item">
-                                <div class="countdown-value">${String(hours).padStart(2, '0')}</div>
-                                <div class="countdown-label">Часов</div>
-                            </div>
-                            <div class="countdown-item">
-                                <div class="countdown-value">${String(minutes).padStart(2, '0')}</div>
-                                <div class="countdown-label">Минут</div>
-                            </div>
-                            <div class="countdown-item">
-                                <div class="countdown-value">${String(seconds).padStart(2, '0')}</div>
-                                <div class="countdown-label">Секунд</div>
-                            </div>
+                        <div class="countdown" data-end="${endMs}">
+                            <div class="countdown-item"><div class="countdown-value">${String(h).padStart(2,'0')}</div><div class="countdown-label">Часов</div></div>
+                            <div class="countdown-item"><div class="countdown-value">${String(m).padStart(2,'0')}</div><div class="countdown-label">Минут</div></div>
+                            <div class="countdown-item"><div class="countdown-value">${String(s).padStart(2,'0')}</div><div class="countdown-label">Секунд</div></div>
                         </div>
-                        <button class="btn btn-primary btn-full" style="margin-top: 12px;">
-                            Сделать ставку
-                        </button>
-                    </div>
-                `;
-            }).join('');
+                    </div>`;
+                }).join('');
+            } catch(e) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">Нет данных</div><div class="empty-text">Запусти мониторинг в боте</div></div>';
+            }
         }
 
         function refreshFavorites() {
@@ -1605,101 +1568,111 @@
 
         async function refreshStats() {
             const container = document.getElementById('liquidityContainer');
-            
-            const liquidityData = [
-                { name: 'Christmas Tree', level: 'ВЫСОКАЯ', sales24h: 45, avgTime: 1.5 },
-                { name: 'Space Monkey', level: 'СРЕДНЯЯ', sales24h: 23, avgTime: 4.2 },
-                { name: 'Dragon', level: 'НИЗКАЯ', sales24h: 8, avgTime: 12.5 },
-                { name: 'Panda', level: 'ВЫСОКАЯ', sales24h: 38, avgTime: 2.1 },
-                { name: 'Wolf', level: 'СРЕДНЯЯ', sales24h: 19, avgTime: 5.8 }
-            ];
-            
-            state.collectionsData = liquidityData;
-            document.getElementById('statCollections').textContent = liquidityData.length;
-            
-            container.innerHTML = liquidityData.map(col => {
-                const levelClass = {
-                    'ВЫСОКАЯ': 'liquidity-high',
-                    'СРЕДНЯЯ': 'liquidity-medium',
-                    'НИЗКАЯ': 'liquidity-low'
-                }[col.level];
-                
-                const timeStr = col.avgTime < 1 
-                    ? `${Math.round(col.avgTime * 60)} мин`
-                    : col.avgTime < 24
-                    ? `${col.avgTime.toFixed(1)} ч`
-                    : `${(col.avgTime / 24).toFixed(1)} дн`;
-                
-                return `
-                    <div class="settings-item">
-                        <div>
-                            <div class="settings-label">${col.name}</div>
-                            <div class="settings-description">
-                                Продано: <b>${col.sales24h}</b> | Среднее время: ~${timeStr}
+            container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            try {
+                // Ликвидность из бота
+                const liqResp = await fetch(BOT_API + '/api/liquidity').catch(() => null);
+                // Коллекции из бота
+                const colResp = await fetch(BOT_API + '/api/collections').catch(() => null);
+
+                if (colResp && colResp.ok) {
+                    const cols = await colResp.json();
+                    state.collectionsData = cols;
+                    document.getElementById('statCollections').textContent = cols.length;
+                }
+
+                if (liqResp && liqResp.ok) {
+                    const liqData = await liqResp.json();
+                    if (!liqData.length) {
+                        container.innerHTML = '<div class="empty-state"><div class="empty-icon">📈</div><div class="empty-title">Нет данных</div><div class="empty-text">Статистика накапливается по мере продаж</div></div>';
+                        return;
+                    }
+                    container.innerHTML = liqData.map(col => {
+                        const levelClass = { 'ВЫСОКАЯ': 'liquidity-high', 'СРЕДНЯЯ': 'liquidity-medium', 'НИЗКАЯ': 'liquidity-low' }[col.level] || 'liquidity-low';
+                        const t = col.avg_time;
+                        const timeStr = !t ? '' : t < 1 ? Math.round(t*60)+'м' : t < 24 ? t.toFixed(1)+'ч' : (t/24).toFixed(1)+'дн';
+                        return `<div class="settings-item">
+                            <div>
+                                <div class="settings-label">${col.name}</div>
+                                <div class="settings-description">Продано: <b>${col.sales_24h}</b>${timeStr ? ' | ~' + timeStr : ''}</div>
                             </div>
-                        </div>
-                        <div class="liquidity-badge ${levelClass}">${col.level}</div>
-                    </div>
-                `;
-            }).join('');
+                            <div class="liquidity-badge ${levelClass}">${col.level}</div>
+                        </div>`;
+                    }).join('');
+                } else {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📈</div><div class="empty-title">Нет данных</div><div class="empty-text">Запусти мониторинг в боте</div></div>';
+                }
+            } catch(e) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Ошибка</div><div class="empty-text">' + e.message + '</div></div>';
+            }
         }
 
         async function refreshDashboard() {
-            // Update stats
-            document.getElementById('statListings').textContent = state.listings.length;
-            document.getElementById('statAuctions').textContent = state.auctions.length;
-            
-            // Count profitable listings (>10% discount)
+            // Статус бота
+            try {
+                const resp = await fetch(BOT_API + '/api/status').catch(() => null);
+                if (resp && resp.ok) {
+                    const s = await resp.json();
+                    state.monitoring = s.monitoring;
+                    updateMonitoringUI();
+                    document.getElementById('statListings').textContent = s.seen_listings || 0;
+                    document.getElementById('statCollections').textContent = s.collections_count || 0;
+                }
+            } catch(e) {}
+
+            // Count profitable from real listings
             const profitable = state.listings.filter(l => {
-                const discount = (l.floor - l.price) / l.floor * 100;
-                return discount > 10;
+                const f = parseFloat(l.floor), p = parseFloat(l.price);
+                return f > 0 && p > 0 && (f - p) / f * 100 > 10;
             }).length;
             document.getElementById('statProfit').textContent = profitable;
-            
-            // Recent findings
+
+            // Recent findings — последние 5 реальных листингов
             const recent = state.listings.slice(0, 5);
-            document.getElementById('recentFindings').innerHTML = recent.map(l => `
-                <div class="settings-item" onclick="showListingDetails('${l.id}')" style="cursor: pointer;">
-                    <div>
-                        <div class="settings-label">${l.name}</div>
-                        <div class="settings-description">
-                            <span class="platform platform-${l.platform}">${l.platform}</span>
+            if (recent.length) {
+                document.getElementById('recentFindings').innerHTML = recent.map(l => `
+                    <div class="settings-item" onclick="showListingDetails('${l.id}')" style="cursor: pointer;">
+                        <div>
+                            <div class="settings-label">${l.name}</div>
+                            <div class="settings-description"><span class="platform platform-${l.platform}">${l.platform.toUpperCase()}</span>${l.model ? ' · ' + l.model : ''}</div>
                         </div>
-                    </div>
-                    <div class="price" style="font-size: 16px;">${l.price} TON</div>
-                </div>
-            `).join('');
+                        <div class="price" style="font-size: 16px;">${parseFloat(l.price).toFixed(2)} TON</div>
+                    </div>`).join('');
+            } else {
+                document.getElementById('recentFindings').innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-icon">👀</div><div class="empty-title">Жду новых листингов</div></div>';
+            }
         }
 
-        function showGiftHistory() {
+        async function showGiftHistory() {
             const giftId = document.getElementById('giftIdInput').value.trim();
             const container = document.getElementById('giftHistoryContainer');
-            
-            if (!giftId) {
-                showToast('Введите Gift ID');
-                return;
-            }
-            
+            if (!giftId) { showToast('Введите Gift ID'); return; }
             container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-            
-            // Demo history
-            setTimeout(() => {
-                const history = [
-                    { date: '2026-03-15', price: 12.5, buyer: 'User1', seller: 'User2' },
-                    { date: '2026-03-14', price: 11.8, buyer: 'User3', seller: 'User4' },
-                    { date: '2026-03-13', price: 13.2, buyer: 'User5', seller: 'User6' }
-                ];
-                
-                container.innerHTML = history.map(h => `
-                    <div class="settings-item">
-                        <div>
-                            <div class="settings-label">${h.date}</div>
-                            <div class="settings-description">${h.seller} → ${h.buyer}</div>
-                        </div>
-                        <div class="price" style="font-size: 16px;">${h.price} TON</div>
-                    </div>
-                `).join('');
-            }, 500);
+            try {
+                const resp = await fetch(BOT_API + '/api/history/' + encodeURIComponent(giftId)).catch(() => null);
+                if (resp && resp.ok) {
+                    const history = await resp.json();
+                    if (!history.length) {
+                        container.innerHTML = '<div class="empty-state"><div class="empty-icon">📜</div><div class="empty-title">История пуста</div></div>';
+                        return;
+                    }
+                    container.innerHTML = history.map(h => {
+                        const price = typeof h.price === 'number' && h.price > 1000 ? (h.price / 1e9).toFixed(4) : parseFloat(h.price || 0).toFixed(4);
+                        const date = h.date ? (typeof h.date === 'number' ? new Date(h.date * 1000).toLocaleDateString('ru') : String(h.date).slice(0,10)) : '?';
+                        return `<div class="settings-item">
+                            <div>
+                                <div class="settings-label">${date}</div>
+                                <div class="settings-description">${h.seller || '?'} → ${h.buyer || '?'}</div>
+                            </div>
+                            <div class="price" style="font-size:16px">${price} TON</div>
+                        </div>`;
+                    }).join('');
+                } else {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">📜</div><div class="empty-title">Нет данных</div></div>';
+                }
+            } catch(e) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Ошибка</div></div>';
+            }
         }
 
         // Listing Details Modal
